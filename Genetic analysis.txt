@@ -1,0 +1,107 @@
+#1.gwas=============
+for i in {1..22}
+do
+plink2 \
+--bfile UKB_gene_v3_imp_qc_chr${i} \
+--keep british_id.txt \
+--exclude zrq_GWAS/snp/snp_chr${i}.txt \
+--glm hide-covar cols=chrom,pos,ax,a1freq,nobs,beta,se,tz,p \
+--covar-variance-standardize Age,BMI,V26,V27,V28,V29,V30,V31,V32,V33,V34,V35 \
+--geno 0.05 \
+--mind 0.05 \
+--maf 0.01 \
+--hwe 1e-6 \
+--vif 1000 \
+--pheno freeT_female_ph.txt \
+--covar freeT_female_cov.txt \
+--covar-col-nums  3,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24 \
+--out freeT_female_chr${i} 
+done
+
+
+
+
+
+# LDSC ====================
+#step1 munge sumstats
+source activate ldsc
+for n in $hormone
+do 
+munge_sumstats.py \
+--sumstats ${n} \
+--snp ID \
+--N-col  OBS_CT \
+--a1 A1 \
+--a2 AX \
+--frq A1_FREQ \
+--signed-sumstats BETA,0 \
+--p  P \
+--merge-alleles w_hm3.snplist  \
+--chunksize 500000 \
+--out sumstats_gz/${n}.tsv.gz
+done
+
+
+#step2  heritability
+for n in $hormone
+do 
+ldsc.py \
+--h2 ${n} \
+--ref-ld-chr eur_w_ld_chr/  \
+--w-ld-chr eur_w_ld_chr/  \
+--out ${n}.sumstats.gz
+done
+
+#step2  correlation
+ldsc.py \
+--rg ${hormone},${pheno} \
+--ref-ld-chr eur_w_ld_chr/  \
+--w-ld-chr eur_w_ld_chr/  \
+--out  ${hormone}_${pheno}
+
+
+
+
+
+
+
+
+
+
+
+
+# MR
+data <- format_data(
+	exps,
+	type='exposure',
+	chr_col = 'CHROM',
+	pos_col = 'POS',
+	snp_col = "ID",
+	beta_col = "BETA",
+	se_col = "SE",
+	effect_allele_col ="A1",
+	other_allele_col = "AX",
+	eaf_col = "A1_FREQ",
+	pval_col = "P",
+	samplesize_col ='OBS_CT',
+	phenotype_col = "phenotype")
+data1 <- data[which(data$pval.exposure<5e-8),]
+data1 <- clump_data(data1,clump_r2=0.05,clump_kb = 10000)
+
+
+
+outcome <- plyr::rename(outcome,c('A1'='effect_allele',
+                        'A2'='other_allele',
+                        'Freq'= 'eaf',
+                        'rsID'='SNP',
+                        'P'='pval',
+                        'Nsum'='samplesize',
+                        'Phenotype'='phenotype'))
+
+outcome_format <- format_data(outcome,type='outcome',phenotype_col = 'phenotype')
+
+mydata <- harmonise_data(
+  exposure_dat = data1, 
+  outcome_dat = outcome
+)
+result<-mr(mydata) 
